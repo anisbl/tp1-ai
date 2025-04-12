@@ -5,14 +5,9 @@ import pandas as pd
 import os
 import math
 import time
-
-# Try importing networkx, but handle failure gracefully
-try:
-    import networkx as nx
-    import pickle
-    HAS_NETWORKX = True
-except ImportError:
-    HAS_NETWORKX = False
+import networkx as nx
+import pickle
+import osmnx as ox
 
 st.set_page_config(layout="wide", page_title="Path Finder - Jijel, Algeria")
 
@@ -63,81 +58,59 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     
     return distance
 
-# Compatibility for different Streamlit versions
-try:
-    # For newer Streamlit versions
-    @st.cache_data
-    def load_locations():
-        if os.path.exists('node_data.csv'):
-            return pd.read_csv('node_data.csv', index_col=0)
-        else:
-            # Create sample data if file doesn't exist
-            data = {
-                'name': ['University', 'Hospital', 'Market', 'Beach', 'Park', 'Train Station'],
-                'lat': [36.8000, 36.8100, 36.8050, 36.8150, 36.8200, 36.8250],
-                'lon': [5.7600, 5.7700, 5.7650, 5.7750, 5.7800, 5.7850]
-            }
-            df = pd.DataFrame(data)
-            return df
-except AttributeError:
-    # For older Streamlit versions
-    @st.cache
-    def load_locations():
-        if os.path.exists('node_data.csv'):
-            return pd.read_csv('node_data.csv', index_col=0)
-        else:
-            # Create sample data if file doesn't exist
-            data = {
-                'name': ['University', 'Hospital', 'Market', 'Beach', 'Park', 'Train Station'],
-                'lat': [36.8000, 36.8100, 36.8050, 36.8150, 36.8200, 36.8250],
-                'lon': [5.7600, 5.7700, 5.7650, 5.7750, 5.7800, 5.7850]
-            }
-            df = pd.DataFrame(data)
-            return df
+# Function to create and save a graph if it doesn't exist
+def create_jijel_graph():
+    try:
+        # Get Jijel area graph
+        jijel_center = (36.8200, 5.7700)  # Approximate center of Jijel
+        G = ox.graph_from_point(jijel_center, dist=5000, network_type='drive')
+        
+        # Save the graph
+        with open('jijel_graph.pkl', 'wb') as f:
+            pickle.dump(G, f)
+        
+        return G, True
+    except Exception as e:
+        st.error(f"Failed to create graph: {str(e)}")
+        return None, False
 
-# Try to load graph with version compatibility
-try:
-    # For newer Streamlit versions
-    @st.cache_resource
-    def load_graph():
-        try:
-            if os.path.exists('jijel_graph.pkl') and HAS_NETWORKX:
-                try:
-                    with open('jijel_graph.pkl', 'rb') as f:
-                        graph = pickle.load(f)
-                    return graph, True
-                except Exception:
-                    return None, False
-            else:
-                return None, False
-        except Exception:
-            return None, False
-except AttributeError:
-    # For older Streamlit versions
-    @st.cache(allow_output_mutation=True)
-    def load_graph():
-        try:
-            if os.path.exists('jijel_graph.pkl') and HAS_NETWORKX:
-                try:
-                    with open('jijel_graph.pkl', 'rb') as f:
-                        graph = pickle.load(f)
-                    return graph, True
-                except Exception:
-                    return None, False
-            else:
-                return None, False
-        except Exception:
-            return None, False
+@st.cache_data
+def load_locations():
+    if os.path.exists('node_data.csv'):
+        return pd.read_csv('node_data.csv')
+    else:
+        # Create sample data for Jijel if file doesn't exist
+        data = {
+            'name': ['Jijel University', 'Jijel Hospital', 'Central Market', 'Kotama Beach', 
+                     'City Park', 'Bus Station', 'Port', 'City Center'],
+            'lat': [36.8082, 36.8182, 36.8150, 36.8250, 36.8190, 36.8120, 36.8220, 36.8160],
+            'lon': [5.7693, 5.7782, 5.7740, 5.7820, 5.7760, 5.7730, 5.7790, 5.7750]
+        }
+        df = pd.DataFrame(data)
+        df.to_csv('node_data.csv', index=False)
+        return df
 
-# Function to find nearest node (works with or without OSMnx)
-def find_nearest_node(graph, lat, lon, using_graph=True):
-    if using_graph and HAS_NETWORKX:
-        try:
-            import osmnx as ox
-            return ox.distance.nearest_nodes(graph, lon, lat)
-        except Exception:
-            return None
-    return None
+@st.cache_resource
+def load_graph():
+    try:
+        if os.path.exists('jijel_graph.pkl'):
+            with open('jijel_graph.pkl', 'rb') as f:
+                graph = pickle.load(f)
+            return graph, True
+        else:
+            # Create graph if it doesn't exist
+            return create_jijel_graph()
+    except Exception as e:
+        st.warning(f"Error loading graph: {str(e)}")
+        return None, False
+
+# Find nearest node to a point
+def find_nearest_node(graph, lat, lon):
+    try:
+        return ox.nearest_nodes(graph, lon, lat)
+    except Exception as e:
+        st.warning(f"Error finding nearest node: {str(e)}")
+        return None
 
 # Load data
 try:
@@ -147,8 +120,8 @@ try:
     if 'path_calculated' not in st.session_state:
         st.session_state.path_calculated = False
         st.session_state.start = locations_df['name'].tolist()[0]
-        st.session_state.end = locations_df['name'].tolist()[0]
-        st.session_state.algorithm = "Direct"
+        st.session_state.end = locations_df['name'].tolist()[-1]  # Default to different locations
+        st.session_state.algorithm = "Dijkstra"
         st.session_state.map_initialized = False
 
     # Try to load graph if not already in session state
@@ -159,7 +132,7 @@ try:
             if st.session_state.using_graph:
                 st.success("Map data loaded successfully!")
             else:
-                st.info("Using simplified routing (direct paths).")
+                st.info("Using simplified routing (direct paths). Install OSMnx and NetworkX for better routing.")
 
     # Create layout with columns
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -183,7 +156,7 @@ try:
         st.session_state.end = end
 
     with col3:
-        if st.session_state.using_graph and HAS_NETWORKX:
+        if st.session_state.using_graph:
             algorithm_options = ["Dijkstra", "A*", "Direct"]
         else:
             algorithm_options = ["Direct"]
@@ -191,19 +164,19 @@ try:
         algorithm = st.selectbox(
             "Select algorithm",
             algorithm_options,
-            index=0,
+            index=algorithm_options.index(st.session_state.algorithm) if st.session_state.algorithm in algorithm_options else 0,
             key="algorithm_select"
         )
         st.session_state.algorithm = algorithm
 
     # Get coordinates
-    start_idx = locations_df[locations_df['name'] == start].index[0]
-    end_idx = locations_df[locations_df['name'] == end].index[0]
+    start_row = locations_df[locations_df['name'] == start].iloc[0]
+    end_row = locations_df[locations_df['name'] == end].iloc[0]
 
-    start_lat = locations_df.loc[start_idx, 'lat']
-    start_lon = locations_df.loc[start_idx, 'lon']
-    end_lat = locations_df.loc[end_idx, 'lat']
-    end_lon = locations_df.loc[end_idx, 'lon']
+    start_lat = start_row['lat']
+    start_lon = start_row['lon']
+    end_lat = end_row['lat']
+    end_lon = end_row['lon']
 
     # Calculate button
     find_path = st.button("Find Path", key="find_path")
@@ -220,21 +193,34 @@ try:
         # Create map centered between start and end points
         center_lat = (start_lat + end_lat) / 2
         center_lon = (start_lon + end_lon) / 2
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=12, 
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=14, 
                       tiles="OpenStreetMap")
 
-        # Add markers for start and end points
-        folium.Marker(
-            location=[start_lat, start_lon],
-            popup=start,
-            icon=folium.Icon(color="green", icon="play")
-        ).add_to(m)
-
-        folium.Marker(
-            location=[end_lat, end_lon],
-            popup=end,
-            icon=folium.Icon(color="red", icon="stop")
-        ).add_to(m)
+        # Add markers for locations
+        for i, row in locations_df.iterrows():
+            # Only show markers for start and end points
+            if row['name'] == start:
+                folium.Marker(
+                    location=[row['lat'], row['lon']],
+                    popup=row['name'],
+                    icon=folium.Icon(color="green", icon="play")
+                ).add_to(m)
+            elif row['name'] == end:
+                folium.Marker(
+                    location=[row['lat'], row['lon']],
+                    popup=row['name'],
+                    icon=folium.Icon(color="red", icon="stop")
+                ).add_to(m)
+            else:
+                # For other locations, use a smaller circle marker without an icon
+                folium.CircleMarker(
+                    location=[row['lat'], row['lon']],
+                    radius=5,  # Small circle
+                    popup=row['name'],
+                    color="#3186cc",
+                    fill=True,
+                    fill_color="#3186cc"
+                ).add_to(m)
 
         # Add path to map if calculated
         if st.session_state.path_calculated:
@@ -242,28 +228,46 @@ try:
                 path_coords = []
                 distance = 0
                 
-                if st.session_state.using_graph and algorithm != "Direct" and HAS_NETWORKX:
+                if st.session_state.using_graph and algorithm != "Direct":
                     # Use graph-based routing
                     graph = st.session_state.graph
-                    start_node = find_nearest_node(graph, start_lat, start_lon, st.session_state.using_graph)
-                    end_node = find_nearest_node(graph, end_lat, end_lon, st.session_state.using_graph)
+                    
+                    # Find nearest nodes
+                    with st.spinner("Finding nearest network nodes..."):
+                        start_node = find_nearest_node(graph, start_lat, start_lon)
+                        end_node = find_nearest_node(graph, end_lat, end_lon)
                     
                     if start_node is not None and end_node is not None:
                         with st.spinner(f"Computing shortest path with {algorithm}..."):
-                            if algorithm == "Dijkstra":
-                                shortest_path_nodes = nx.shortest_path(graph, start_node, end_node, weight='length')
-                            elif algorithm == "A*":
-                                shortest_path_nodes = nx.astar_path(graph, start_node, end_node, weight='length')
-                            
-                            # Extract coordinates
-                            path_coords = [(graph.nodes[node]['y'], graph.nodes[node]['x']) for node in shortest_path_nodes]
-                            
-                            # Calculate distance
-                            distance = sum(
-                                graph[shortest_path_nodes[i]][shortest_path_nodes[i+1]][0]['length'] 
-                                for i in range(len(shortest_path_nodes)-1)
-                            )
+                            try:
+                                if algorithm == "Dijkstra":
+                                    shortest_path_nodes = nx.shortest_path(graph, start_node, end_node, weight='length')
+                                elif algorithm == "A*":
+                                    shortest_path_nodes = nx.astar_path(graph, start_node, end_node, weight='length', 
+                                                                       heuristic=lambda u, v: haversine_distance(
+                                                                           graph.nodes[u]['y'], graph.nodes[u]['x'],
+                                                                           graph.nodes[v]['y'], graph.nodes[v]['x']
+                                                                       ))
+                                
+                                # Extract coordinates from nodes
+                                path_coords = [(graph.nodes[node]['y'], graph.nodes[node]['x']) for node in shortest_path_nodes]
+                                
+                                # Calculate total distance
+                                distance = sum(
+                                    graph[shortest_path_nodes[i]][shortest_path_nodes[i+1]][0]['length'] 
+                                    for i in range(len(shortest_path_nodes)-1)
+                                )
+                                
+                                # Add intermediate points to the start and end
+                                if path_coords:
+                                    path_coords = [[start_lat, start_lon]] + path_coords + [[end_lat, end_lon]]
+                            except nx.NetworkXNoPath:
+                                st.error("No path found between these points using the selected algorithm.")
+                                # Fall back to direct path
+                                path_coords = [[start_lat, start_lon], [end_lat, end_lon]]
+                                distance = haversine_distance(start_lat, start_lon, end_lat, end_lon)
                     else:
+                        st.warning("Couldn't find graph nodes near the selected points.")
                         # Fall back to direct path
                         path_coords = [[start_lat, start_lon], [end_lat, end_lon]]
                         distance = haversine_distance(start_lat, start_lon, end_lat, end_lon)
@@ -303,13 +307,8 @@ try:
     else:
         m = st.session_state.map
 
-    # Display the map with version compatibility
-    try:
-        # For newer versions of streamlit_folium
-        folium_static(m, width=800, height=550)
-    except TypeError:
-        # For older versions that don't support width/height params
-        folium_static(m)
+    # Display the map
+    folium_static(m, width=800, height=550)
 
     # Add information
     with st.expander("About this application"):
@@ -318,11 +317,16 @@ try:
         
         It supports various routing methods:
         
-        - **Dijkstra**: Finds the shortest path using edge weights (if graph is available)
-        - **A***: An optimized pathfinding algorithm that uses heuristics (if graph is available)
+        - **Dijkstra**: Finds the shortest path using edge weights
+        - **A***: An optimized pathfinding algorithm that uses heuristics for faster performance
         - **Direct**: Shows a straight-line path between points
         
-        The map is rendered using OpenStreetMap data.
+        The map is rendered using OpenStreetMap data. For the best experience, make sure you have NetworkX and OSMnx installed.
+        
+        To install the required packages:
+        ```
+        pip install networkx osmnx streamlit foliumstreamlit-folium pandas networkx osmnx numpy pandas tensorflow
+        ```
         """)
 
 except Exception as e:
