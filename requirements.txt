@@ -6,4 +6,4 @@ networkx
 osmnx
 numpy
 pandas
-tensorflow
+scikit-learn
