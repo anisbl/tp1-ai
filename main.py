@@ -4,16 +4,29 @@ import streamlit as st
 import folium
 from streamlit_folium import folium_static
 import pandas as pd
+import os
+import pickle
 
+# Define cache file paths
+GRAPH_CACHE_FILE = "jijel_graph.pkl"
 
-@st.cache_data
+@st.cache_resource
 def load_graph(city):
-    return ox.graph_from_place(city, network_type="all")
-
+    """Load graph from cache if available, otherwise download and cache it"""
+    if os.path.exists(GRAPH_CACHE_FILE):
+        st.info("Loading graph from local cache...")
+        with open(GRAPH_CACHE_FILE, 'rb') as f:
+            return pickle.load(f)
+    else:
+        st.info("Downloading graph from OpenStreetMap (this may take a while)...")
+        graph = ox.graph_from_place(city, network_type="all")
+        # Save to cache
+        with open(GRAPH_CACHE_FILE, 'wb') as f:
+            pickle.dump(graph, f)
+        return graph
 
 def nearest_node(graph, lat, lon):
     return ox.distance.nearest_nodes(graph, lon, lat)
-
 
 st.set_page_config(layout="wide", page_title="Path Finder - Jijel, Algeria")
 
@@ -46,18 +59,20 @@ st.markdown("<h1 class='main-header'>Jijel Path Finder</h1>", unsafe_allow_html=
 # Load data
 locations_df = pd.read_csv('node_data.csv', index_col=0)
 
-# Use session state to avoid reloading the map unnecessarily
+# Load graph with a progress bar
 if 'graph' not in st.session_state:
-    with st.spinner("Loading graph data..."):
+    with st.spinner("Loading map data for Jijel..."):
         st.session_state.graph = load_graph('Jijel, Algeria')
-        st.success("Graph loaded successfully!")
+        st.success("Map data loaded successfully!")
 
+# Initialize session state variables
 if 'map_initialized' not in st.session_state:
     st.session_state.map_initialized = False
     st.session_state.path_calculated = False
     st.session_state.start = locations_df['name'].tolist()[0]
     st.session_state.end = locations_df['name'].tolist()[0]
     st.session_state.algorithm = "Dijkstra"
+    st.session_state.last_map = None
 
 # Create layout with columns
 col1, col2, col3 = st.columns([1, 1, 1])
@@ -103,73 +118,79 @@ find_path = st.button("Find Shortest Path", key="find_path")
 
 if find_path:
     st.session_state.path_calculated = True
+    st.session_state.map_initialized = False  # Force map redraw
 
 # Display the map
 st.markdown("<h2 class='subheader'>Map View</h2>", unsafe_allow_html=True)
 
-# Create map centered between start and end points
-center_lat = (start_lat + end_lat) / 2
-center_lon = (start_lon + end_lon) / 2
-m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
+# Only create a new map if necessary
+if not st.session_state.map_initialized:
+    # Create map centered between start and end points
+    center_lat = (start_lat + end_lat) / 2
+    center_lon = (start_lon + end_lon) / 2
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=12, 
+                  tiles="OpenStreetMap")  # Faster tile loading
 
-# Add markers for start and end points
-folium.Marker(
-    location=[start_lat, start_lon],
-    popup=start,
-    icon=folium.Icon(color="green", icon="play")
-).add_to(m)
+    # Add markers for start and end points
+    folium.Marker(
+        location=[start_lat, start_lon],
+        popup=start,
+        icon=folium.Icon(color="green", icon="play")
+    ).add_to(m)
 
-folium.Marker(
-    location=[end_lat, end_lon],
-    popup=end,
-    icon=folium.Icon(color="red", icon="stop")
-).add_to(m)
+    folium.Marker(
+        location=[end_lat, end_lon],
+        popup=end,
+        icon=folium.Icon(color="red", icon="stop")
+    ).add_to(m)
 
-# Add path to map if calculated
-if st.session_state.path_calculated:
-    try:
-        graph = st.session_state.graph
-        start_node = nearest_node(graph, start_lat, start_lon)
-        end_node = nearest_node(graph, end_lat, end_lon)
-        
-        with st.spinner(f"Computing shortest path with {algorithm}..."):
-            if algorithm == "Dijkstra":
-                shortest_path_nodes = nx.shortest_path(graph, start_node, end_node, weight='length')
-            elif algorithm == "A*":
-                shortest_path_nodes = nx.astar_path(graph, start_node, end_node, weight='length')  
-            elif algorithm == "Bellman-Ford":
-                shortest_path_nodes = nx.bellman_ford_path(graph, start_node, end_node, weight='length')
+    # Add path to map if calculated
+    if st.session_state.path_calculated:
+        try:
+            graph = st.session_state.graph
+            start_node = nearest_node(graph, start_lat, start_lon)
+            end_node = nearest_node(graph, end_lat, end_lon)
             
-            shortest_path_coords = [(graph.nodes[node]['y'], graph.nodes[node]['x']) for node in shortest_path_nodes]
-        
-        # Draw shortest path
-        folium.PolyLine(
-            locations=shortest_path_coords, 
-            color='blue', 
-            weight=5,
-            opacity=0.7
-        ).add_to(m)
-        
-        # Calculate distance
-        distance = sum(
-            graph[shortest_path_nodes[i]][shortest_path_nodes[i+1]][0]['length'] 
-            for i in range(len(shortest_path_nodes)-1)
-        )
-        
-        st.success(f"Path found! Total distance: {distance:.2f} meters ({distance/1000:.2f} km)")
-        
-    except nx.NetworkXNoPath:
-        st.error("No path found between the selected locations.")
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        st.titel("Error")
-
+            with st.spinner(f"Computing shortest path with {algorithm}..."):
+                if algorithm == "Dijkstra":
+                    shortest_path_nodes = nx.shortest_path(graph, start_node, end_node, weight='length')
+                elif algorithm == "A*":
+                    shortest_path_nodes = nx.astar_path(graph, start_node, end_node, weight='length')  
+                elif algorithm == "Bellman-Ford":
+                    shortest_path_nodes = nx.bellman_ford_path(graph, start_node, end_node, weight='length')
+                
+                shortest_path_coords = [(graph.nodes[node]['y'], graph.nodes[node]['x']) for node in shortest_path_nodes]
+            
+            # Draw shortest path
+            folium.PolyLine(
+                locations=shortest_path_coords, 
+                color='blue', 
+                weight=5,
+                opacity=0.7
+            ).add_to(m)
+            
+            # Calculate distance
+            distance = sum(
+                graph[shortest_path_nodes[i]][shortest_path_nodes[i+1]][0]['length'] 
+                for i in range(len(shortest_path_nodes)-1)
+            )
+            
+            st.success(f"Path found! Total distance: {distance:.2f} meters ({distance/1000:.2f} km)")
+            
+        except nx.NetworkXNoPath:
+            st.error("No path found between the selected locations.")
+        except Exception as e:
+            st.error(f"An error occurred: {str(e)}")
+    
+    st.session_state.last_map = m
+    st.session_state.map_initialized = True
+else:
+    m = st.session_state.last_map
 
 # Display the map
 map_container = st.container()
 with map_container:
     folium_static(m, width=800, height=550)
-
 
 # Add information section
 with st.expander("About this application"):
