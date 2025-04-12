@@ -4,33 +4,25 @@ import streamlit as st
 import folium
 from streamlit_folium import folium_static
 import pandas as pd
-import os
 import pickle
+import os
 
-# Define cache file paths
-GRAPH_CACHE_FILE = "jijel_graph.pkl"
-
+# Load the pre-downloaded graph
 @st.cache_resource
-def load_graph(city):
-    """Load graph from cache if available, otherwise download and cache it"""
-    if os.path.exists(GRAPH_CACHE_FILE):
-        st.info("Loading graph from local cache...")
-        with open(GRAPH_CACHE_FILE, 'rb') as f:
+def load_graph():
+    if os.path.exists('jijel_graph.pkl'):
+        with open('jijel_graph.pkl', 'rb') as f:
             return pickle.load(f)
     else:
-        st.info("Downloading graph from OpenStreetMap (this may take a while)...")
-        graph = ox.graph_from_place(city, network_type="all")
-        # Save to cache
-        with open(GRAPH_CACHE_FILE, 'wb') as f:
-            pickle.dump(graph, f)
-        return graph
+        st.error("Graph file not found! Please make sure 'jijel_graph.pkl' is in the same directory as this script.")
+        st.stop()
 
 def nearest_node(graph, lat, lon):
     return ox.distance.nearest_nodes(graph, lon, lat)
 
 st.set_page_config(layout="wide", page_title="Path Finder - Jijel, Algeria")
 
-# Add some custom CSS for better appearance
+# Add custom CSS
 st.markdown("""
     <style>
     .main-header {
@@ -61,8 +53,8 @@ locations_df = pd.read_csv('node_data.csv', index_col=0)
 
 # Load graph with a progress bar
 if 'graph' not in st.session_state:
-    with st.spinner("Loading map data for Jijel..."):
-        st.session_state.graph = load_graph('Jijel, Algeria')
+    with st.spinner("Loading map data..."):
+        st.session_state.graph = load_graph()
         st.success("Map data loaded successfully!")
 
 # Initialize session state variables
@@ -129,7 +121,7 @@ if not st.session_state.map_initialized:
     center_lat = (start_lat + end_lat) / 2
     center_lon = (start_lon + end_lon) / 2
     m = folium.Map(location=[center_lat, center_lon], zoom_start=12, 
-                  tiles="OpenStreetMap")  # Faster tile loading
+                  tiles="OpenStreetMap")
 
     # Add markers for start and end points
     folium.Marker(
